@@ -1,10 +1,9 @@
 package main
 
 import (
-	"math"
 	"math/rand"
 )
 
 func generateInitialNumber() uint32 {
-	return uint32(math.Max(1, rand.Float64()*0xff))
+	return uint32(1 + rand.Uint32()%(0xff-1))
 }

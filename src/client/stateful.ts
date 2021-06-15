@@ -41,11 +41,7 @@ export async function runStateful(n: number, uuid: string): Promise<void> {
         }
       });
 
-      client.on("close", () => {
-        reject("Server closed connection unexpectedly");
-      });
-
-      client.on("error", (err) => {
+      const onError = (err?: Error): void => {
         console.warn("Handling error", err);
         numRetries++;
 
@@ -58,8 +54,17 @@ export async function runStateful(n: number, uuid: string): Promise<void> {
           setTimeout(async () => {
             // Here, we resume the sequence with a new connection
             await initiateConnection(numRetries);
+            resolve();
           }, exponentialDelayMs);
         }
+      };
+
+      client.on("close", () => {
+        onError();
+      });
+
+      client.on("error", (err) => {
+        onError(err);
       });
     });
 

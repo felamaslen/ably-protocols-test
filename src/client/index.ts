@@ -6,7 +6,7 @@ import { runStateless } from "./stateless";
 async function run(): Promise<void> {
   switch (process.argv[2]) {
     case "--stateless":
-      await runStateless(3);
+      await runStateless(10);
       break;
     case "--stateful":
       await runStateful(10, uuidv4());

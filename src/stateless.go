@@ -3,12 +3,13 @@ package main
 import (
 	"fmt"
 	"io"
+	"math"
 	"net"
 	"strconv"
 	"time"
 )
 
-func readStatelessConnectionParameters(conn *net.Conn) (a int64, n int64, err error) {
+func readStatelessConnectionParameters(conn *net.Conn) (a int64, n int64, m int64, err error) {
 	// This is an extremely rudimentary connection data parser which just
 	// takes in two fixed-size data points (a and n)
 	//
@@ -17,8 +18,11 @@ func readStatelessConnectionParameters(conn *net.Conn) (a int64, n int64, err er
 	buf := make([]byte, 256)
 	tmp := make([]byte, 8)
 
+	numChars := 0
+
 	for {
 		char, err := (*conn).Read(tmp)
+		numChars += char
 		if err != nil {
 			if err != io.EOF {
 				fmt.Printf("Read error: %v\n", err)
@@ -29,24 +33,25 @@ func readStatelessConnectionParameters(conn *net.Conn) (a int64, n int64, err er
 
 		buf = append(buf, tmp[:char]...)
 
-		// A in 1..0xff, N in 1..0xffff
+		// A in 1..0xff, N in 1..0xffff, M in 1..0xffff where M is "N so far"
 		// We read these numbers in from the connection data
 		// They are passed as decimals with leading zeroes, i.e.
-		// A in 1..255 (3 chars), N in 1..65535 (5 chars)
-		if char >= 3+5 {
+		// A in 1..255 (3 chars), N, M in 1..65535 (5 chars)
+		if numChars >= 3+5+5 {
 			// This is necessary to handle UTF-8 input
 			runes := []rune(string(buf))
 
 			offset := 32 * 8
 
-			a, err = strconv.ParseInt(string(runes[offset:offset+3]), 10, 8)
-			n, err = strconv.ParseInt(string(runes[offset+3:offset+3+5]), 10, 8)
+			a, err = strconv.ParseInt(string(runes[offset:offset+3]), 10, 16)
+			n, err = strconv.ParseInt(string(runes[offset+3:offset+3+5]), 10, 32)
+			m, err = strconv.ParseInt(string(runes[offset+3+5:offset+3+5+5]), 10, 32)
+
+			fmt.Printf("[stateless] Found: a=%v, n=%v, m=%v, runes=%v\n", a, n, m, string(runes))
 
 			break
 		}
 	}
-
-	fmt.Printf("[stateless] Found: a=%v, n=%v\n", a, n)
 
 	if a < 0 || a > 0xff {
 		err = fmt.Errorf("a out of range: %v", a)
@@ -61,7 +66,7 @@ func readStatelessConnectionParameters(conn *net.Conn) (a int64, n int64, err er
 func handleStatelessConnection(conn *net.Conn) {
 	(*conn).SetDeadline(time.Now().Add(CONNECTION_DEADLINE))
 
-	a, n, err := readStatelessConnectionParameters(conn)
+	a, n, m, err := readStatelessConnectionParameters(conn)
 	if err != nil {
 		// TODO: client error
 		panic(err)
@@ -72,11 +77,16 @@ func handleStatelessConnection(conn *net.Conn) {
 		fmt.Printf("Handled initial connection; a=%v, n=%v\n", a, n)
 	}
 
+	a *= int64(math.Pow(2, float64(m)))
+
 	i := int64(0)
 
 	for {
+		fmt.Printf("Sending %d\n", a)
 		_, err = (*conn).Write([]byte(fmt.Sprintf("%d\n", a)))
-		if err != nil {
+		if err == nil {
+			(*conn).SetDeadline(time.Now().Add(CONNECTION_DEADLINE))
+		} else {
 			(*conn).Close()
 		}
 

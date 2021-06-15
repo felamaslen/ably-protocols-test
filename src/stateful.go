@@ -38,7 +38,7 @@ func readStatefulConnectionParameters(conn *net.Conn) (n int64, uuid string, err
 
 			offset := 32 * 8
 
-			n, err = strconv.ParseInt(string(runes[offset:offset+5]), 10, 8)
+			n, err = strconv.ParseInt(string(runes[offset:offset+5]), 10, 32)
 
 			uuid = string(runes[offset+5 : offset+5+36])
 

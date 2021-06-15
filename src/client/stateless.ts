@@ -8,19 +8,22 @@ export async function runStateless(nStart: number): Promise<void> {
   const initiateConnection = (
     a = 0,
     n = nStart,
+    m = 0,
     numRetries = 0
   ): Promise<number> =>
     new Promise((resolve, reject) => {
       let sum = 0;
-      let lastNumber = a;
+      let initialNumber = a;
       let numReceived = 0;
 
       const client = new net.Socket();
 
       client.connect(8080, "127.0.0.1", () => {
-        console.log("Connected");
+        console.log("Connected; writing", a, n, m);
         client.write(
-          `${String(a).padStart(3, "0")}${String(n).padStart(5, "0")}`
+          `${String(a).padStart(3, "0")}${String(n).padStart(5, "0")}${String(
+            m
+          ).padStart(5, "0")}`
         );
       });
 
@@ -30,9 +33,9 @@ export async function runStateless(nStart: number): Promise<void> {
         const numbers = messages.filter((msg) => /^\d+$/.test(msg));
 
         sum = numbers.reduce<number>((last, num) => last + Number(num), sum);
-        lastNumber = numbers.length
-          ? Number(numbers[numbers.length - 1])
-          : lastNumber;
+        if (!initialNumber) {
+          initialNumber = Number(numbers[0]);
+        }
 
         numReceived += numbers.length;
 
@@ -47,11 +50,7 @@ export async function runStateless(nStart: number): Promise<void> {
         }
       });
 
-      client.on("close", () => {
-        reject("Server closed connection unexpectedly");
-      });
-
-      client.on("error", (err) => {
+      const onError = (err?: Error): void => {
         console.warn("Handling error", err);
         numRetries++;
 
@@ -63,13 +62,23 @@ export async function runStateless(nStart: number): Promise<void> {
           console.log("Waiting", exponentialDelayMs, "ms");
           setTimeout(async () => {
             // Here, we resume the sequence with a new connection
-            await initiateConnection(
-              lastNumber * 2,
+            const result = await initiateConnection(
+              initialNumber,
               n - numReceived,
+              m + numReceived,
               numRetries
             );
+            resolve(result);
           }, exponentialDelayMs);
         }
+      };
+
+      client.on("close", () => {
+        onError();
+      });
+
+      client.on("error", (err) => {
+        onError(err);
       });
     });
 
