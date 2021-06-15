@@ -1,8 +1,10 @@
 import net from "net";
+import { MAX_RETRIES } from "./constants";
+import { calculateExponentialDelay } from "./utils";
 
-const MAX_RETRIES = 10;
+export async function runStateless(nStart: number): Promise<void> {
+  console.log("Running stateless client");
 
-async function runStateless(nStart: number): Promise<void> {
   const initiateConnection = (
     a = 0,
     n = nStart,
@@ -56,7 +58,7 @@ async function runStateless(nStart: number): Promise<void> {
         if (numRetries > MAX_RETRIES) {
           reject("ERR_MAX_RETRIES");
         } else {
-          const exponentialDelayMs = 1000 * 2 ** numRetries;
+          const exponentialDelayMs = calculateExponentialDelay(numRetries);
 
           console.log("Waiting", exponentialDelayMs, "ms");
           setTimeout(async () => {
@@ -74,21 +76,4 @@ async function runStateless(nStart: number): Promise<void> {
   const sum = await initiateConnection();
 
   console.log("Sum found", sum);
-}
-
-async function run(): Promise<void> {
-  console.log("Running client");
-  await runStateless(3);
-}
-
-if (require.main === module) {
-  run()
-    .then(() => {
-      console.log("Done");
-      process.exit(0);
-    })
-    .catch((err) => {
-      console.error("Unhandled error:", err);
-      process.exit(1);
-    });
 }
