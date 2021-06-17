@@ -41,13 +41,16 @@ export async function runStateful(n: number, uuid: string): Promise<void> {
         }
       });
 
+      let retried = false;
+
       const onError = (err?: Error): void => {
         console.warn("Handling error", err);
-        numRetries++;
 
         if (numRetries > MAX_RETRIES) {
           reject("ERR_MAX_RETRIES");
-        } else {
+        } else if (!retried) {
+          numRetries++;
+          retried = true;
           const exponentialDelayMs = calculateExponentialDelay(numRetries);
 
           console.log("Waiting", exponentialDelayMs, "ms");

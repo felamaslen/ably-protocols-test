@@ -9,10 +9,10 @@ export async function runStateless(nStart: number): Promise<void> {
     a = 0,
     n = nStart,
     m = 0,
+    sum = 0,
     numRetries = 0
   ): Promise<number> =>
     new Promise((resolve, reject) => {
-      let sum = 0;
       let initialNumber = a;
       let numReceived = 0;
 
@@ -50,13 +50,16 @@ export async function runStateless(nStart: number): Promise<void> {
         }
       });
 
+      let retried = false;
+
       const onError = (err?: Error): void => {
         console.warn("Handling error", err);
-        numRetries++;
 
         if (numRetries > MAX_RETRIES) {
           reject("ERR_MAX_RETRIES");
-        } else {
+        } else if (!retried) {
+          retried = true;
+          numRetries++;
           const exponentialDelayMs = calculateExponentialDelay(numRetries);
 
           console.log("Waiting", exponentialDelayMs, "ms");
@@ -66,6 +69,7 @@ export async function runStateless(nStart: number): Promise<void> {
               initialNumber,
               n - numReceived,
               m + numReceived,
+              sum,
               numRetries
             );
             resolve(result);
