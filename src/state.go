@@ -2,24 +2,68 @@ package main
 
 import (
 	"crypto/md5"
+	"encoding/binary"
 	"encoding/json"
 	"fmt"
+	"log"
+	"math/rand"
 	"time"
 )
 
 type StoreClient struct {
-	uuid string
-	n    int64
-	seq  []uint32
-
-	progress int
+	uuid   string
+	length int
 
 	selfDestructTimer *time.Timer
 }
 
+func (c *StoreClient) getPRNG() *rand.Rand {
+	seed := binary.BigEndian.Uint64([]byte(c.uuid))
+	return rand.New(rand.NewSource(int64(seed)))
+}
+
+func (c *StoreClient) getSequenceChannelFromIndex(i int) chan uint32 {
+	var channel = make(chan uint32)
+
+	go func() {
+		r := c.getPRNG()
+
+		for j := 0; j < c.length; j++ {
+			nextValue := r.Uint32()
+			if j >= i {
+				channel <- nextValue
+			}
+		}
+
+		close(channel)
+	}()
+
+	return channel
+}
+
 func (c *StoreClient) getChecksum() string {
-	marshaled, _ := json.Marshal(c.seq)
-	return fmt.Sprintf("%x", md5.Sum(marshaled))
+	var seq []uint32
+	var channel = c.getSequenceChannelFromIndex(0)
+
+	for {
+		value, more := <-channel
+
+		if value != 0 {
+			seq = append(seq, value)
+		}
+
+		if !more {
+			break
+		}
+	}
+
+	marshaled, _ := json.Marshal(seq)
+
+	result := fmt.Sprintf("%x", md5.Sum(marshaled))
+
+	fmt.Printf("getChecksum() result=%v, time=%v\n", result, c.uuid)
+
+	return result
 }
 
 type Store struct {
@@ -31,21 +75,27 @@ func (s *Store) has(uuid string) bool {
 	return (*s.clients)[uuid] != nil
 }
 
-func (s *Store) set(uuid string, n int64, seq []uint32) error {
+func (s *Store) set(uuid string, n int, m int) error {
 	if (*s.expiredClientUuids)[uuid] {
 		return fmt.Errorf("Client UUID %s went away and is reserved\n", uuid)
 	}
 
 	client := StoreClient{
-		uuid:     uuid,
-		n:        n,
-		seq:      seq,
-		progress: 0,
+		uuid:   uuid,
+		length: n,
 	}
 
 	(*s.clients)[uuid] = &client
 
 	return nil
+}
+
+func (s *Store) setConnectionTime(uuid string) int64 {
+	if !s.has(uuid) {
+		return 0
+	}
+	now := time.Now().UnixNano()
+	return now
 }
 
 func (s *Store) get(uuid string) (client *StoreClient) {
@@ -54,14 +104,8 @@ func (s *Store) get(uuid string) (client *StoreClient) {
 	return
 }
 
-func (s *Store) progressClient(uuid string) {
-	if !(*s).has(uuid) {
-		return
-	}
-	(*s.clients)[uuid].progress++
-}
-
 func (s *Store) unset(uuid string) {
+	log.Printf("Removing client state: %v\n", uuid)
 	delete(*s.clients, uuid)
 	delete(*s.expiredClientUuids, uuid)
 }
@@ -81,6 +125,7 @@ func (s *Store) setSelfDestructTimer(uuid string) {
 	go func() {
 		<-(*client.selfDestructTimer).C
 		s.unset(uuid)
+		log.Printf("Marking client as went away: %v\n", uuid)
 		(*s.expiredClientUuids)[uuid] = true
 	}()
 }

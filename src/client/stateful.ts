@@ -4,19 +4,33 @@ import net from "net";
 import { MAX_RETRIES } from "./constants";
 import { calculateExponentialDelay } from "./utils";
 
-export async function runStateful(n: number, uuid: string): Promise<void> {
+export async function runStateful(
+  port: number,
+  n: number,
+  uuid: string
+): Promise<void> {
   console.log("Running stateful client");
 
   const sequence: number[] = [];
   let expectedChecksum: string = "";
 
-  const initiateConnection = (numRetries = 0): Promise<void> =>
+  let numRetries = 0;
+
+  const initiateConnection = (m = 0): Promise<void> =>
     new Promise((resolve, reject) => {
       const client = new net.Socket();
 
-      client.connect(8081, "127.0.0.1", () => {
+      let numReceived = 0;
+
+      client.connect(port, "127.0.0.1", () => {
         console.log("Connected");
-        client.write(`${String(n).padStart(5, "0")}${uuid}`);
+        client.write(
+          `Y${uuid}${String(n).padStart(5, "0")}${String(m).padStart(5, "0")}`
+        );
+      });
+
+      client.on("connect", () => {
+        numRetries = 0;
       });
 
       client.on("data", (data) => {
@@ -24,8 +38,11 @@ export async function runStateful(n: number, uuid: string): Promise<void> {
 
         const numberMessages = messages.filter((msg) => /^\d+$/.test(msg));
         numberMessages.forEach((num) => {
+          console.debug(new Date(), "received", num);
           sequence.push(Number(num));
         });
+
+        numReceived += numberMessages.length;
 
         const checksumMessage = messages.find((msg) =>
           /^checksum=(\w+)$/.test(msg)
@@ -56,7 +73,7 @@ export async function runStateful(n: number, uuid: string): Promise<void> {
           console.log("Waiting", exponentialDelayMs, "ms");
           setTimeout(async () => {
             // Here, we resume the sequence with a new connection
-            await initiateConnection(numRetries);
+            await initiateConnection(m + numReceived);
             resolve();
           }, exponentialDelayMs);
         }

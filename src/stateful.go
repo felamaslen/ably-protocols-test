@@ -3,20 +3,16 @@ package main
 import (
 	"fmt"
 	"io"
-	"math/rand"
 	"net"
 	"strconv"
 	"time"
 )
 
-func readStatefulConnectionParameters(conn *net.Conn) (n int64, uuid string, err error) {
+func readStatefulConnectionParameters(conn *net.Conn, buf *[]byte, numChars int) (uuid string, n int, m int, err error) {
 	// Rudimentary data parser
 	// example uuid:
 	// 09ff8f0b-c0fb-4587-9173-807695f5b576
-	buf := make([]byte, 256)
 	tmp := make([]byte, 8)
-
-	numChars := 0
 
 	for {
 		// Please see the stateless.go for a very similar implementation
@@ -31,43 +27,48 @@ func readStatefulConnectionParameters(conn *net.Conn) (n int64, uuid string, err
 			break
 		}
 
-		buf = append(buf, tmp[:char]...)
+		*buf = append(*buf, tmp[:char]...)
 
-		if numChars >= 5+36 {
-			runes := []rune(string(buf))
+		if numChars >= 1+36+5+5 {
+			runes := []rune(string(*buf))
 
-			offset := 32 * 8
+			offset := 1 + 32*8
 
-			n, err = strconv.ParseInt(string(runes[offset:offset+5]), 10, 32)
+			uuid = string(runes[offset : offset+36])
 
-			uuid = string(runes[offset+5 : offset+5+36])
+			n64, err := strconv.ParseInt(string(runes[offset+36:offset+36+5]), 10, 32)
+			if err != nil {
+				panic(err)
+			}
+			n = int(n64)
+
+			m64, err := strconv.ParseInt(string(runes[offset+36+5:offset+36+5+5]), 10, 32)
+			if err != nil {
+				panic(err)
+			}
+			m = int(m64)
 
 			break
 		}
 	}
 
-	fmt.Printf("[stateful] Found: n=%v, uuid=%v\n", n, uuid)
+	fmt.Printf("[stateful] Found: uuid=%v, n=%v, m=%v\n", uuid, n, m)
 
 	if n < 1 || n > 0xffff {
 		err = fmt.Errorf("n out of range: %v", n)
 	}
-
-	return
-}
-
-func getRandomSequence(n int64) (seq []uint32) {
-	seq = []uint32{}
-	for i := int64(0); i < n; i++ {
-		seq = append(seq, rand.Uint32())
+	if m < 0 || m > n {
+		err = fmt.Errorf("m out of range: %v", m)
 	}
 
 	return
 }
 
-func handleStatefulConnection(conn *net.Conn, store *Store) {
+func handleStatefulConnection(store *Store, conn *net.Conn, buf *[]byte, numChars int) {
 	(*conn).SetDeadline(time.Now().Add(CONNECTION_DEADLINE))
 
-	n, uuid, err := readStatefulConnectionParameters(conn)
+	// Here, m keeps track of the index of the last value confirmed as received by the client
+	uuid, n, m, err := readStatefulConnectionParameters(conn, buf, numChars)
 
 	if err != nil {
 		// TODO: client error
@@ -75,9 +76,7 @@ func handleStatefulConnection(conn *net.Conn, store *Store) {
 	}
 
 	if !store.has(uuid) {
-		fmt.Printf("creating client\n")
-		seq := getRandomSequence(n)
-		err = store.set(uuid, n, seq)
+		err = store.set(uuid, n, m)
 		if err != nil {
 			fmt.Printf("Error setting client in store: %s\n", err)
 			(*conn).Write([]byte(fmt.Sprintf("%s", err)))
@@ -87,32 +86,36 @@ func handleStatefulConnection(conn *net.Conn, store *Store) {
 		store.setSelfDestructTimer(uuid)
 	}
 
-	for {
-		client := store.get(uuid)
-
-		if client.progress >= len(client.seq) {
-			break
-		}
-
-		// Using redis, I would run LREM to retrieve the first item and remove it in one op
-		// This should avoid race conditions when multiple servers are running
-		nextValue := client.seq[client.progress]
-
-		store.progressClient(uuid)
-
-		fmt.Printf("[stateful] sending %v\n", nextValue)
-		_, err := (*conn).Write([]byte(fmt.Sprintf("%d\n", nextValue)))
-
-		if err == nil {
-			store.keepalive(uuid)
-			(*conn).SetDeadline(time.Now().Add(CONNECTION_DEADLINE))
-		}
-
-		time.Sleep(1 * time.Second)
-		store.keepalive(uuid)
-	}
+	// connectionTime := store.setConnectionTime(uuid)
 
 	client := store.get(uuid)
+
+	if m < client.length {
+		var channel = client.getSequenceChannelFromIndex(m)
+
+		for {
+			nextValue, more := <-channel
+
+			if nextValue != 0 {
+				fmt.Printf("[stateful] sending %v\n", nextValue)
+				_, err := (*conn).Write([]byte(fmt.Sprintf("%d\n", nextValue)))
+
+				if err == nil {
+					store.keepalive(uuid)
+					(*conn).SetDeadline(time.Now().Add(CONNECTION_DEADLINE))
+				} else {
+					break
+				}
+			}
+
+			if !more {
+				break
+			}
+
+			time.Sleep(1 * time.Second)
+			store.keepalive(uuid)
+		}
+	}
 
 	checksum := client.getChecksum()
 
@@ -130,27 +133,7 @@ func handleStatefulConnection(conn *net.Conn, store *Store) {
 	if err != nil {
 		fmt.Printf("Error writing EOF: %v\n", err)
 	}
-}
 
-func listenStateful() {
-	fmt.Printf("Listening (stateful) on port %d\n", PORT_STATEFUL)
-
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", PORT_STATEFUL))
-	store := Store{
-		clients:            &map[string]*StoreClient{},
-		expiredClientUuids: &map[string]bool{},
-	}
-
-	if err != nil {
-		panic(err)
-	}
-
-	for {
-		conn, err := ln.Accept()
-		if err == nil {
-			go handleStatefulConnection(&conn, &store)
-		} else {
-			fmt.Printf("Error handling stateful connection: %v\n", err)
-		}
-	}
+	// This ensures we only delete the state if there has not been a subsequent connection
+	// if store.has(uuid) && store.get(uuid).lastConnectionTime ==
 }

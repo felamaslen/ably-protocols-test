@@ -2,15 +2,19 @@ import net from "net";
 import { MAX_RETRIES } from "./constants";
 import { calculateExponentialDelay } from "./utils";
 
-export async function runStateless(nStart: number): Promise<void> {
+export async function runStateless(
+  port: number,
+  nStart: number
+): Promise<void> {
   console.log("Running stateless client");
+
+  let numRetries = 0;
 
   const initiateConnection = (
     a = 0,
     n = nStart,
     m = 0,
-    sum = 0,
-    numRetries = 0
+    sum = 0
   ): Promise<number> =>
     new Promise((resolve, reject) => {
       let initialNumber = a;
@@ -18,13 +22,17 @@ export async function runStateless(nStart: number): Promise<void> {
 
       const client = new net.Socket();
 
-      client.connect(8080, "127.0.0.1", () => {
+      client.connect(port, "127.0.0.1", () => {
         console.log("Connected; writing", a, n, m);
         client.write(
-          `${String(a).padStart(3, "0")}${String(n).padStart(5, "0")}${String(
+          `N${String(a).padStart(3, "0")}${String(n).padStart(5, "0")}${String(
             m
           ).padStart(5, "0")}`
         );
+      });
+
+      client.on("connect", () => {
+        numRetries = 0;
       });
 
       client.on("data", (data) => {
@@ -69,8 +77,7 @@ export async function runStateless(nStart: number): Promise<void> {
               initialNumber,
               n - numReceived,
               m + numReceived,
-              sum,
-              numRetries
+              sum
             );
             resolve(result);
           }, exponentialDelayMs);

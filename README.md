@@ -26,10 +26,11 @@ The server is written in Go. The client is written in NodeJS using Typescript.
 The client initiates a TCP connection with the server on port 8080.
 The client should write the following data:
 
-`xxxyyyyyzzzzz`
+`Yxxxyyyyyzzzzz`
 
 where:
 
+- `Y` specifies that this is stateless
 - `xxx` is the zero-padded value of `a`, which should be `000` in the case of the initial request
 - `yyyyy` is the zero-padded value of `n` which specifies the number of *remaining* numbers required
 - `zzzzz` is the zero-padded value of `m` which specifies how many numbers have already been received, in the case of *subsequent requests* (after failures)
@@ -45,10 +46,11 @@ The client knows the stream is complete when it receives the following data: `EO
 The client initiates a TCP connection with the server on port 8081.
 The client should generate a UUID, and write the following data:
 
-`yyyyyUUUUUUUU-UUUU-UUUU-UUUU-UUUUUUUUUUUU`
+`NyyyyyUUUUUUUU-UUUU-UUUU-UUUU-UUUUUUUUUUUU`
 
 where:
 
+- `N` specifies that this is stateful
 - `yyyyy` is the zero-padded value of `n` which specifies the number of numbers required
 - `UUU...` is the generated UUID
 
@@ -60,18 +62,15 @@ The client can validate the result in the stateless case by calculating the chec
 
 #### PRNG
 
-The golang `math/rand` library is used to generate a uint32 array, using `rand.Uint32()`. The PRNG is seeded during the server's startup, using the current UNIX nanosecond timestamp.
+The golang `math/rand` library is used to generate a uint32 sequence, using `rand.Uint32()`. The PRNG is seeded for each client, using the uuid (this is converted to an int64 treating it as a big-endian binary sequence).
 
 #### Session state
 
 The session state for each client includes:
 
-- `uuid` - necessary to identify the client from the incoming request
-- `seq` - sequence of numbers generated for this client; we don't want this to change between requests
-- `progress` - how far along the sequence the client has already received; necessary so we don't replay the entire sequence when requests fail
+- `uuid` - key, necessary to identify the client from the incoming request and used as PRNG seed
+- `length` - expected length of the sequence, given by the client - this is necessary to determine if the client has finished, from a subsequent retry request
 - `selfDestructTimer` - this is an implementation detail; if I was using redis I would use its native expiry feature so that the session data is destroyed after a timeout. In golang I am using a timer for this.
-
-There is also the value of `n` which was passed from the client; I don't think this is necessary on second thoughts, as it can be calculated from the length of `seq` anyway.
 
 #### Checksum
 

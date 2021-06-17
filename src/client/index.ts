@@ -4,12 +4,14 @@ import { runStateful } from "./stateful";
 import { runStateless } from "./stateless";
 
 async function run(): Promise<void> {
-  switch (process.argv[2]) {
+  const port = Number(process.argv[2]) ?? 8080;
+
+  switch (process.argv[3]) {
     case "--stateless":
-      await runStateless(10);
+      await runStateless(port, 10);
       break;
     case "--stateful":
-      await runStateful(10, uuidv4());
+      await runStateful(port, 10, uuidv4());
       break;
     default:
       throw new Error("Usage: ts-node <script> --stateless | --stateful");

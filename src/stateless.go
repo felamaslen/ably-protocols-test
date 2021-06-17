@@ -9,16 +9,13 @@ import (
 	"time"
 )
 
-func readStatelessConnectionParameters(conn *net.Conn) (a int64, n int64, m int64, err error) {
+func readStatelessConnectionParameters(conn *net.Conn, buf *[]byte, numChars int) (a int64, n int64, m int64, err error) {
 	// This is an extremely rudimentary connection data parser which just
 	// takes in two fixed-size data points (a and n)
 	//
 	// For a more sophisticated app, use JSON / XML / etc.
 	// (actually please don't use XML)
-	buf := make([]byte, 256)
 	tmp := make([]byte, 8)
-
-	numChars := 0
 
 	for {
 		char, err := (*conn).Read(tmp)
@@ -31,17 +28,17 @@ func readStatelessConnectionParameters(conn *net.Conn) (a int64, n int64, m int6
 			break
 		}
 
-		buf = append(buf, tmp[:char]...)
+		*buf = append(*buf, tmp[:char]...)
 
 		// A in 1..0xff, N in 1..0xffff, M in 1..0xffff where M is "N so far"
 		// We read these numbers in from the connection data
 		// They are passed as decimals with leading zeroes, i.e.
 		// A in 1..255 (3 chars), N, M in 1..65535 (5 chars)
-		if numChars >= 3+5+5 {
+		if numChars >= 1+3+5+5 {
 			// This is necessary to handle UTF-8 input
-			runes := []rune(string(buf))
+			runes := []rune(string(*buf))
 
-			offset := 32 * 8
+			offset := 1 + 32*8
 
 			a, err = strconv.ParseInt(string(runes[offset:offset+3]), 10, 16)
 			n, err = strconv.ParseInt(string(runes[offset+3:offset+3+5]), 10, 32)
@@ -63,10 +60,10 @@ func readStatelessConnectionParameters(conn *net.Conn) (a int64, n int64, m int6
 	return
 }
 
-func handleStatelessConnection(conn *net.Conn) {
+func handleStatelessConnection(conn *net.Conn, buf *[]byte, numChars int) {
 	(*conn).SetDeadline(time.Now().Add(CONNECTION_DEADLINE))
 
-	a, n, m, err := readStatelessConnectionParameters(conn)
+	a, n, m, err := readStatelessConnectionParameters(conn, buf, numChars)
 	if err != nil {
 		// TODO: client error
 		panic(err)
@@ -105,23 +102,4 @@ func handleStatelessConnection(conn *net.Conn) {
 	}
 
 	fmt.Printf("Finished connection; a=%v\n", a)
-}
-
-func listenStateless() {
-	fmt.Printf("Listening (stateless) on port %d\n", PORT_STATELESS)
-
-	ln, err := net.Listen("tcp", fmt.Sprintf("127.0.0.1:%d", PORT_STATELESS))
-
-	if err != nil {
-		panic(err)
-	}
-
-	for {
-		conn, err := ln.Accept()
-		if err == nil {
-			go handleStatelessConnection(&conn)
-		} else {
-			fmt.Printf("Error handling stateless connection: %v\n", err)
-		}
-	}
 }
